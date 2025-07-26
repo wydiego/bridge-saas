@@ -1,0 +1,232 @@
+# 🌉 BRIDGE SaaS - Lewis Configuration
+
+## 🔐 Credenciales de Lewis
+
+### Base de Datos PostgreSQL
+- **Database**: `bridge_lewis_db`
+- **Usuario**: `lewis_bridge`  
+- **Contraseña**: `Lewis2024Secure!`
+
+### Usuario Administrador
+- **Usuario**: `lewis`
+- **Email**: `lewis@bridge.bo`
+- **Contraseña**: `LewisAdmin2024!`
+
+### Redis Cache
+- **URL**: redis://localhost:6379/0
+- **Contraseña**: `Lewis_Redis_2024!`
+
+## 🚀 Inicio Rápido
+
+### Setup inicial (solo primera vez)
+```bash
+cd ~/Documents/n8n/Bridge
+./scripts/setup.sh
+```
+
+### Desarrollo diario
+```bash
+cd ~/Documents/n8n/Bridge
+./scripts/dev.sh
+```
+
+### Manual (paso a paso)
+```bash
+# 1. Servicios Docker
+docker-compose up -d postgres redis
+
+# 2. Backend
+cd backend
+source venv/bin/activate
+python manage.py migrate
+python manage.py create_lewis_admin
+python manage.py runserver
+```
+
+## 🌐 URLs Importantes
+- **Backend API**: http://localhost:8000
+- **Admin Django**: http://localhost:8000/admin
+- **API Docs**: http://localhost:8000/api/docs/
+
+## 📋 Estructura del Proyecto
+```
+~/Documents/n8n/Bridge/
+├── backend/              # Django + DRF
+│   ├── bridge_core/      # Configuración principal
+│   ├── apps/            # Aplicaciones Django
+│   │   ├── authentication/
+│   │   ├── clients/
+│   │   ├── documents/
+│   │   ├── customs/
+│   │   ├── reports/
+│   │   ├── audit/
+│   │   └── dashboard/
+│   └── requirements.txt
+├── frontend/            # React + Next.js (próximamente)
+├── docker/             # Configuraciones Docker
+├── scripts/            # Scripts de automatización
+├── .env               # Variables de entorno
+└── docker-compose.yml
+```
+
+## 🔧 Comandos Útiles
+
+### Django Management
+```bash
+cd backend && source venv/bin/activate
+
+# Crear migraciones
+python manage.py makemigrations
+
+# Aplicar migraciones
+python manage.py migrate
+
+# Crear superusuario adicional
+python manage.py createsuperuser
+
+# Shell de Django
+python manage.py shell
+
+# Correr tests
+python manage.py test
+
+# Colectar archivos estáticos
+python manage.py collectstatic
+```
+
+### Docker Management
+```bash
+# Ver logs de servicios
+docker-compose logs -f postgres
+docker-compose logs -f redis
+
+# Reiniciar servicios
+docker-compose restart postgres redis
+
+# Parar todos los servicios
+docker-compose down
+
+# Parar y eliminar volúmenes (⚠️ BORRA LA BASE DE DATOS)
+docker-compose down -v
+
+# Ver estado de contenedores
+docker ps
+```
+
+### Desarrollo
+```bash
+# Ver logs de Django
+cd backend && source venv/bin/activate
+python manage.py runserver --verbosity=2
+
+# Crear nueva app
+python manage.py startapp nueva_app
+
+# Crear superusuario
+python manage.py createsuperuser
+```
+
+## 🛡️ Características de Seguridad
+- JWT con rotación automática
+- Passwords encriptados con bcrypt
+- CORS configurado para localhost
+- Rate limiting preparado
+- Logs de auditoría configurados
+- Variables de entorno para secrets
+
+## 📊 API Endpoints Disponibles
+
+### Authentication
+- `POST /api/v1/auth/login/` - Login
+- `POST /api/v1/auth/refresh/` - Refresh token
+- `GET /api/v1/auth/profile/` - Perfil del usuario
+
+### Health Checks
+- `GET /api/v1/clients/health/` - Status del módulo clientes
+- `GET /api/v1/documents/health/` - Status del módulo documentos
+- `GET /api/v1/customs/health/` - Status del módulo despachos
+- `GET /api/v1/reports/health/` - Status del módulo reportes
+
+## 🐛 Troubleshooting
+
+### PostgreSQL no se conecta
+```bash
+# Verificar que el contenedor esté corriendo
+docker ps | grep postgres
+
+# Ver logs de PostgreSQL
+docker-compose logs postgres
+
+# Conectar manualmente a la DB
+docker exec -it bridge_lewis_postgres psql -U lewis_bridge -d bridge_lewis_db
+```
+
+### Redis no se conecta
+```bash
+# Verificar contenedor
+docker ps | grep redis
+
+# Conectar a Redis
+docker exec -it bridge_lewis_redis redis-cli
+AUTH Lewis_Redis_2024!
+ping
+```
+
+### Django no inicia
+```bash
+# Verificar entorno virtual
+cd backend
+source venv/bin/activate
+which python
+
+# Reinstalar dependencias
+pip install -r requirements.txt
+
+# Verificar configuración
+python manage.py check
+```
+
+### Puertos ocupados
+```bash
+# Verificar qué procesos usan los puertos
+sudo netstat -tlnp | grep :8000  # Django
+sudo netstat -tlnp | grep :5432  # PostgreSQL  
+sudo netstat -tlnp | grep :6379  # Redis
+
+# Matar proceso en puerto específico
+sudo kill -9 $(sudo lsof -t -i:8000)
+```
+
+## 📱 Próximas Funcionalidades
+- [ ] Módulo completo de Clientes
+- [ ] Sistema de gestión documental
+- [ ] Workflow de despachos aduaneros
+- [ ] Integración con SIDUNEA
+- [ ] Reportes ejecutivos y analytics
+- [ ] Sistema de notificaciones
+- [ ] App móvil (React Native)
+- [ ] Integraciones bancarias
+
+## 🔄 Actualizaciones y Mantenimiento
+
+### Backup de la base de datos
+```bash
+# Crear backup
+docker exec bridge_lewis_postgres pg_dump -U lewis_bridge bridge_lewis_db > backup_$(date +%Y%m%d_%H%M%S).sql
+
+# Restaurar backup
+docker exec -i bridge_lewis_postgres psql -U lewis_bridge bridge_lewis_db < backup_file.sql
+```
+
+### Actualizar dependencias
+```bash
+cd backend && source venv/bin/activate
+pip list --outdated
+pip install --upgrade package_name
+pip freeze > requirements.txt
+```
+
+---
+**🚀 Configurado específicamente para Lewis - BRIDGE SaaS Bolivia 🇧🇴**
+
+*Para soporte técnico o preguntas sobre el desarrollo, contacta al equipo de desarrollo.*

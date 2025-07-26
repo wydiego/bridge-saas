@@ -1,0 +1,38 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:14-alpine
+    container_name: bridge_lewis_postgres
+    environment:
+      POSTGRES_DB: bridge_lewis_db
+      POSTGRES_USER: lewis_bridge
+      POSTGRES_PASSWORD: Lewis2024Secure!
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+      - "5432:5432"
+    networks:
+      - bridge_network
+    restart: unless-stopped
+
+  redis:
+    image: redis:6-alpine
+    container_name: bridge_lewis_redis
+    command: redis-server --appendonly yes --requirepass Lewis_Redis_2024!
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    networks:
+      - bridge_network
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  bridge_network:
+    driver: bridge
