@@ -1,0 +1,1783 @@
+=== ESTRUCTURA DEL PROYECTO ===
+
+
+=== BACKEND DJANGO - MODELOS ===
+
+
+### FILE: backend/apps/audit/models.py ###
+from django.db import models
+
+# TODO: Implement models for this app
+class BaseModel(models.Model):
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        abstract = True
+
+
+### FILE: backend/apps/reports/models.py ###
+from django.db import models
+
+# TODO: Implement models for this app
+class BaseModel(models.Model):
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        abstract = True
+
+
+### FILE: backend/apps/documents/models.py ###
+from django.db import models
+from django.core.validators import FileExtensionValidator
+from django.utils import timezone
+import os
+from apps.clients.models import Cliente
+from apps.customs.models import DespachoAduanero
+
+def documento_upload_path(instance, filename):
+    """Genera la ruta donde se guardará el archivo"""
+    return f'documentos/{instance.cliente.nit}/{instance.tipo_documento}/{filename}'
+
+class TipoDocumento(models.Model):
+    """Catálogo de tipos de documentos"""
+    
+    CATEGORIA_CHOICES = [
+        ('comercial', 'Comercial'),
+        ('transporte', 'Transporte'),
+        ('origen', 'Origen'),
+        ('sanitario', 'Sanitario'),
+        ('legal', 'Legal'),
+        ('financiero', 'Financiero'),
+        ('otros', 'Otros'),
+    ]
+    
+    codigo = models.CharField(max_length=10, unique=True)
+    nombre = models.CharField(max_length=100)
+    descripcion = models.TextField(blank=True, null=True)
+    categoria = models.CharField(max_length=15, choices=CATEGORIA_CHOICES)
+    es_obligatorio = models.BooleanField(default=False)
+    activo = models.BooleanField(default=True)
+    
+    class Meta:
+        db_table = 'documentos_tipo'
+        verbose_name = 'Tipo de Documento'
+        verbose_name_plural = 'Tipos de Documento'
+        ordering = ['categoria', 'nombre']
+    
+    def __str__(self):
+        return f"{self.codigo} - {self.nombre}"
+
+
+class Documento(models.Model):
+    """Modelo principal para gestión de documentos"""
+    ESTADO_CHOICES = [
+        ('pendiente', 'Pendiente'),
+        ('recibido', 'Recibido'),
+        ('validado', 'Validado'),
+        ('observado', 'Observado'),
+        ('rechazado', 'Rechazado'),
+        ('archivado', 'Archivado'),
+    ]
+    
+    MEDIO_CHOICES = [
+        ('fisico', 'Físico'),
+        ('digital', 'Digital'),
+        ('ambos', 'Físico y Digital'),
+    ]
+    
+    # Información básica
+    numero_documento = models.CharField(max_length=50)
+    tipo_documento = models.ForeignKey(TipoDocumento, on_delete=models.CASCADE)
+    cliente = models.ForeignKey(Cliente, on_delete=models.CASCADE, related_name='documentos')
+    despacho = models.ForeignKey(
+        DespachoAduanero,  
+        on_delete=models.CASCADE,
+        related_name='documentos_generales',
+        null=True,
+        blank=True
+    )
+    
+    # Archivo digital
+    archivo = models.FileField(
+        upload_to=documento_upload_path,
+        validators=[FileExtensionValidator(['pdf', 'jpg', 'jpeg', 'png', 'doc', 'docx', 'xls', 'xlsx'])],
+        null=True,
+        blank=True
+    )
+    nombre_original = models.CharField(max_length=255, blank=True, null=True)
+    tamaño_archivo = models.IntegerField(null=True, blank=True, help_text="Tamaño en bytes")
+    hash_archivo = models.CharField(max_length=64, blank=True, null=True, help_text="Hash SHA-256 del archivo")
+    
+    # Información del documento
+    fecha_documento = models.DateField(help_text="Fecha del documento original")
+    fecha_vencimiento = models.DateField(null=True, blank=True)
+    emisor = models.CharField(max_length=200, help_text="Quien emitió el documento")
+    numero_referencia = models.CharField(max_length=100, blank=True, null=True)
+    
+    # Estado y validación
+    estado = models.CharField(max_length=15, choices=ESTADO_CHOICES, default='pendiente')
+    medio = models.CharField(max_length=10, choices=MEDIO_CHOICES, default='digital')
+    fecha_recepcion = models.DateTimeField(default=timezone.now)
+    fecha_validacion = models.DateTimeField(null=True, blank=True)
+    validado_por = models.CharField(max_length=100, blank=True, null=True)
+    
+    # Observaciones
+    observaciones = models.TextField(blank=True, null=True)
+    observaciones_validacion = models.TextField(blank=True, null=True)
+    
+    # Metadatos
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    created_by = models.CharField(max_length=100)
+    
+    class Meta:
+        db_table = 'documentos_documento'
+        verbose_name = 'Documento'
+        verbose_name_plural = 'Documentos'
+        ordering = ['-fecha_recepcion']
+        unique_together = ['numero_documento', 'tipo_documento', 'cliente']
+    
+    def __str__(self):
+        return f"{self.numero_documento} - {self.tipo_documento.nombre}"
+    
+    @property
+    def esta_vigente(self):
+        """Verifica si el documento está vigente"""
+        if not self.fecha_vencimiento:
+            return True
+        return timezone.now().date() <= self.fecha_vencimiento
+    
+    @property
+    def dias_vencimiento(self):
+        """Días hasta el vencimiento (negativo si ya venció)"""
+        if not self.fecha_vencimiento:
+            return None
+        delta = self.fecha_vencimiento - timezone.now().date()
+        return delta.days
+    
+    def save(self, *args, **kwargs):
+        """Override save para calcular metadatos del archivo"""
+        if self.archivo:
+            self.nombre_original = self.archivo.name
+            if hasattr(self.archivo, 'size'):
+                self.tamaño_archivo = self.archivo.size
+        super().save(*args, **kwargs)
+
+
+class VersionDocumento(models.Model):
+    """Control de versiones de documentos"""
+    
+    documento = models.ForeignKey(Documento, on_delete=models.CASCADE, related_name='versiones')
+    version = models.IntegerField(default=1)
+    archivo = models.FileField(upload_to=documento_upload_path)
+    descripcion_cambios = models.TextField(blank=True, null=True)
+    fecha_version = models.DateTimeField(default=timezone.now)
+    creado_por = models.CharField(max_length=100)
+    
+    class Meta:
+        db_table = 'documentos_version'
+        verbose_name = 'Versión Documento'
+        verbose_name_plural = 'Versiones Documento'
+        unique_together = ['documento', 'version']
+        ordering = ['-version']
+    
+    def __str__(self):
+        return f"{self.documento.numero_documento} v{self.version}"
+
+
+class RegistroDocumento(models.Model):
+    """Registro maestro de control de documentos"""
+    
+    ACCION_CHOICES = [
+        ('entrada', 'Entrada'),
+        ('salida', 'Salida'),
+        ('validacion', 'Validación'),
+        ('observacion', 'Observación'),
+        ('archivo', 'Archivo'),
+    ]
+    
+    documento = models.ForeignKey(Documento, on_delete=models.CASCADE, related_name='registros')
+    fecha_accion = models.DateTimeField(default=timezone.now)
+    accion = models.CharField(max_length=15, choices=ACCION_CHOICES)
+    usuario = models.CharField(max_length=100)
+    descripcion = models.TextField()
+    destinatario = models.CharField(max_length=200, blank=True, null=True)
+    
+    # Para control de salida
+    fecha_devolucion_esperada = models.DateTimeField(null=True, blank=True)
+    fecha_devolucion_real = models.DateTimeField(null=True, blank=True)
+    
+    class Meta:
+        db_table = 'documentos_registro'
+        verbose_name = 'Registro Documento'
+        verbose_name_plural = 'Registros Documento'
+        ordering = ['-fecha_accion']
+    
+    def __str__(self):
+        return f"{self.accion} - {self.documento.numero_documento} - {self.fecha_accion.strftime('%Y-%m-%d')}"
+
+
+class ListaMaestra(models.Model):
+    """Lista maestra de control de registros de documentos"""
+    
+    año = models.IntegerField()
+    mes = models.IntegerField()
+    total_documentos_recibidos = models.IntegerField(default=0)
+    total_documentos_validados = models.IntegerField(default=0)
+    total_documentos_observados = models.IntegerField(default=0)
+    total_documentos_archivados = models.IntegerField(default=0)
+    
+    fecha_cierre = models.DateTimeField(null=True, blank=True)
+    cerrado_por = models.CharField(max_length=100, blank=True, null=True)
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        db_table = 'documentos_lista_maestra'
+        verbose_name = 'Lista Maestra'
+        verbose_name_plural = 'Listas Maestras'
+        unique_together = ['año', 'mes']
+        ordering = ['-año', '-mes']
+    
+    def __str__(self):
+        return f"Lista Maestra {self.mes:02d}/{self.año}"
+
+### FILE: backend/apps/customs/models.py ###
+# backend/apps/customs/models.py
+from django.db import models
+from django.contrib.auth import get_user_model
+from apps.clients.models import Cliente
+
+User = get_user_model()
+
+class DespachoAduanero(models.Model):
+    # Tipos de declaración según tu información
+    TIPO_DECLARACION_CHOICES = [
+        ('IM4', 'Importación para el Consumo'),
+        ('EX1', 'Exportación Definitiva'),
+        ('IM5', 'Admisión Temporal'),
+        ('EX3', 'Reexportación'),
+        ('IT1', 'Importación Temporal'),
+        ('ET1', 'Exportación Temporal'),
+    ]
+    
+    ESTADO_CHOICES = [
+        ('BORRADOR', 'Borrador - En preparación'),
+        ('ELABORADO', 'Elaborado - Listo para enviar'),
+        ('ENVIADO', 'Enviado - Transmitido a SIDUNEA'),
+        ('OBSERVADO', 'Observado - Con observaciones'),
+        ('PAGADO', 'Pagado - Tributos cancelados'),
+        ('NUMERADO', 'Numerado - DIM/DUI asignado'),
+        ('EN_AFORO', 'En Aforo - Revisión física/documental'),
+        ('LEVANTE', 'Levante - Autorizado para retiro'),
+        ('CONCLUIDO', 'Concluido - Mercancía retirada'),
+        ('ARCHIVADO', 'Archivado - Proceso finalizado'),
+    ]
+    
+    CANAL_CHOICES = [
+        ('VERDE', 'Canal Verde - Levante automático'),
+        ('AMARILLO', 'Canal Amarillo - Revisión documental'),
+        ('ROJO', 'Canal Rojo - Revisión física'),
+    ]
+    
+    # Identificación
+    numero_referencia = models.CharField(
+        max_length=50, 
+        unique=True,
+        verbose_name='Número de Referencia Interno'
+    )
+    cliente = models.ForeignKey(Cliente, on_delete=models.CASCADE)
+    tipo_declaracion = models.CharField(
+        max_length=3, 
+        choices=TIPO_DECLARACION_CHOICES
+    )
+    
+    # Datos de la mercancía
+    descripcion_mercancia = models.TextField(verbose_name='Descripción Comercial')
+    partida_arancelaria = models.CharField(max_length=10)
+    pais_origen = models.CharField(max_length=2)  # Código ISO
+    pais_procedencia = models.CharField(max_length=2)
+    cantidad = models.DecimalField(max_digits=12, decimal_places=3)
+    unidad_medida = models.CharField(max_length=10)
+    peso_bruto = models.DecimalField(max_digits=12, decimal_places=3)
+    peso_neto = models.DecimalField(max_digits=12, decimal_places=3)
+    
+    # Valores
+    valor_fob = models.DecimalField(max_digits=15, decimal_places=2)
+    valor_cif = models.DecimalField(
+        max_digits=15, 
+        decimal_places=2,
+        null=True,
+        blank=True
+    )
+    tipo_cambio = models.DecimalField(max_digits=8, decimal_places=4)
+    
+    # Datos del despacho
+    aduana_registro = models.CharField(max_length=50)
+    numero_manifiesto = models.CharField(max_length=50, blank=True)
+    fecha_llegada = models.DateField(null=True, blank=True)
+    
+    # Estados y seguimiento
+    estado = models.CharField(
+        max_length=20, 
+        choices=ESTADO_CHOICES,
+        default='BORRADOR'
+    )
+    numero_dim = models.CharField(
+        max_length=50, 
+        blank=True,
+        verbose_name='Número DIM/DUI'
+    )
+    canal_asignado = models.CharField(
+        max_length=10,
+        choices=CANAL_CHOICES,
+        blank=True
+    )
+    
+    # Auditoría
+    usuario_creacion = models.ForeignKey(
+        User, 
+        on_delete=models.PROTECT,
+        related_name='despachos_creados'
+    )
+    fecha_creacion = models.DateTimeField(auto_now_add=True)
+    fecha_actualizacion = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        ordering = ['-fecha_creacion']
+        verbose_name = 'Despacho Aduanero'
+        verbose_name_plural = 'Despachos Aduaneros'
+        
+    def __str__(self):
+        return f"{self.numero_referencia} - {self.get_tipo_declaracion_display()}"
+    
+
+class LiquidacionAduanera(models.Model):
+    despacho = models.OneToOneField(
+        DespachoAduanero, 
+        on_delete=models.CASCADE,
+        related_name='liquidacion'
+    )
+    
+    # Gravamen Aduanero (GA)
+    gravamen_aduanero = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    # Impuesto al Valor Agregado (IVA)
+    iva = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    # Impuesto al Consumo Específico (ICE)
+    ice = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    # Impuesto Especial a los Hidrocarburos (IEHD)
+    iehd = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    
+    # Totales
+    total_tributos = models.DecimalField(max_digits=15, decimal_places=2)
+    
+    # Pago
+    pagado = models.BooleanField(default=False)
+    fecha_pago = models.DateTimeField(null=True, blank=True)
+    numero_comprobante_pago = models.CharField(max_length=50, blank=True)
+    
+    class Meta:
+        verbose_name = 'Liquidación Aduanera'
+        verbose_name_plural = 'Liquidaciones Aduaneras'
+    
+    def save(self, *args, **kwargs):
+        self.total_tributos = (
+            self.gravamen_aduanero + 
+            self.iva + 
+            self.ice + 
+            self.iehd
+        )
+        super().save(*args, **kwargs)
+    
+    def __str__(self):
+        return f"Liquidación - {self.despacho.numero_referencia}"
+
+
+class DocumentoDespacho(models.Model):
+    TIPO_DOCUMENTO_CHOICES = [
+        ('FACTURA', 'Factura Comercial'),
+        ('BL', 'Bill of Lading'),
+        ('GUIA_AEREA', 'Guía Aérea'),
+        ('CRT', 'Carta de Porte'),
+        ('PACKING', 'Lista de Empaque'),
+        ('DAV', 'Declaración Andina de Valor'),
+        ('POLIZA', 'Póliza de Seguro'),
+        ('CERT_ORIGEN', 'Certificado de Origen'),
+        ('SENASAG', 'Certificado SENASAG'),
+        ('OTRO', 'Otro Documento'),
+    ]
+    
+    despacho = models.ForeignKey(
+        DespachoAduanero, 
+        on_delete=models.CASCADE,
+        related_name='documentos'
+    )
+    tipo_documento = models.CharField(
+        max_length=20,
+        choices=TIPO_DOCUMENTO_CHOICES
+    )
+    numero_documento = models.CharField(max_length=100)
+    fecha_emision = models.DateField()
+    archivo = models.FileField(
+        upload_to='despachos/documentos/%Y/%m/',
+        null=True,
+        blank=True
+    )
+    observaciones = models.TextField(blank=True)
+    fecha_carga = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        unique_together = ['despacho', 'tipo_documento', 'numero_documento']
+        verbose_name = 'Documento del Despacho'
+        verbose_name_plural = 'Documentos del Despacho'
+        ordering = ['tipo_documento', 'fecha_emision']
+    
+    def __str__(self):
+        return f"{self.get_tipo_documento_display()} - {self.numero_documento}"
+
+### FILE: backend/apps/dashboard/models.py ###
+from django.db import models
+
+# TODO: Implement models for this app
+class BaseModel(models.Model):
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        abstract = True
+
+
+### FILE: backend/apps/clients/models.py ###
+# backend/apps/clients/models.py
+from django.db import models
+from django.core.validators import MinLengthValidator
+from django.contrib.auth import get_user_model
+
+User = get_user_model()
+
+class Cliente(models.Model):
+    TIPO_OPERADOR_CHOICES = [
+        ('IMP', 'Importador'),
+        ('EXP', 'Exportador'),
+        ('BOTH', 'Importador/Exportador'),
+    ]
+    
+    TIPO_CLIENTE_CHOICES = [
+        ('REGULAR', 'Regular'),
+        ('VIP', 'VIP'),
+        ('NUEVO', 'Nuevo'),
+    ]
+    
+    ESTADO_CHOICES = [
+        ('ACTIVO', 'Activo'),
+        ('INACTIVO', 'Inactivo'),
+        ('SUSPENDIDO', 'Suspendido'),
+    ]
+    
+    VOLUMEN_CHOICES = [
+        ('BAJO', 'Bajo'),
+        ('MEDIO', 'Medio'),
+        ('ALTO', 'Alto'),
+    ]
+    
+    # Campos existentes
+    nit = models.CharField(
+        max_length=15,
+        unique=True,
+        validators=[MinLengthValidator(7)],
+        verbose_name='NIT'
+    )
+    razon_social = models.CharField(max_length=200)
+    nombre_comercial = models.CharField(max_length=200, blank=True)  # NUEVO
+    direccion_legal = models.TextField()
+    ciudad = models.CharField(max_length=100, default='Santa Cruz')  # NUEVO
+    telefono = models.CharField(max_length=20)
+    email = models.EmailField()
+    representante_legal = models.CharField(max_length=100)
+    ci_representante = models.CharField(max_length=20)
+    
+    # Campos de categorización
+    tipo_operador = models.CharField(
+        max_length=4,
+        choices=TIPO_OPERADOR_CHOICES,
+        default='IMP'
+    )
+    tipo_cliente = models.CharField(  # NUEVO
+        max_length=20,
+        choices=TIPO_CLIENTE_CHOICES,
+        default='REGULAR'
+    )
+    estado = models.CharField(  # NUEVO
+        max_length=20,
+        choices=ESTADO_CHOICES,
+        default='ACTIVO'
+    )
+    volumen_operaciones = models.CharField(  # NUEVO
+        max_length=10,
+        choices=VOLUMEN_CHOICES,
+        default='MEDIO'
+    )
+    
+    # Timestamps
+    fecha_registro = models.DateTimeField(auto_now_add=True)
+    created_at = models.DateTimeField(auto_now_add=True)  # NUEVO
+    updated_at = models.DateTimeField(auto_now=True)  # NUEVO
+    
+    # Campo anterior para compatibilidad
+    activo = models.BooleanField(default=True)
+    
+    class Meta:
+        ordering = ['razon_social']
+        verbose_name = 'Cliente'
+        verbose_name_plural = 'Clientes'
+    
+    def __str__(self):
+        return f"{self.nit} - {self.razon_social}"
+
+
+class ContactoCliente(models.Model):
+    cliente = models.ForeignKey(Cliente, on_delete=models.CASCADE, related_name='contactos')
+    nombre = models.CharField(max_length=100)
+    cargo = models.CharField(max_length=100)
+    telefono = models.CharField(max_length=20)
+    celular = models.CharField(max_length=20, blank=True)
+    email = models.EmailField()
+    es_principal = models.BooleanField(default=False)
+    observaciones = models.TextField(blank=True)
+    
+    class Meta:
+        verbose_name = 'Contacto del Cliente'
+        verbose_name_plural = 'Contactos del Cliente'
+    
+    def __str__(self):
+        return f"{self.nombre} - {self.cliente.razon_social}"
+
+
+class EvaluacionCliente(models.Model):
+    CALIFICACION_CHOICES = [
+        ('EXCELENTE', 'Excelente'),
+        ('BUENO', 'Bueno'),
+        ('REGULAR', 'Regular'),
+        ('MALO', 'Malo'),
+    ]
+    
+    cliente = models.ForeignKey(Cliente, on_delete=models.CASCADE, related_name='evaluaciones')
+    fecha_evaluacion = models.DateField()
+    calificacion = models.CharField(max_length=20, choices=CALIFICACION_CHOICES)
+    puntaje = models.IntegerField(default=0)
+    observaciones = models.TextField(blank=True)
+    evaluado_por = models.CharField(max_length=100)
+    
+    class Meta:
+        verbose_name = 'Evaluación del Cliente'
+        verbose_name_plural = 'Evaluaciones del Cliente'
+        ordering = ['-fecha_evaluacion']
+    
+    def __str__(self):
+        return f"Evaluación {self.cliente.razon_social} - {self.calificacion}"
+
+### FILE: backend/apps/authentication/models.py ###
+from django.contrib.auth.models import AbstractUser
+from django.db import models
+
+class User(AbstractUser):
+    email = models.EmailField(unique=True)
+    company = models.CharField(max_length=200, blank=True, null=True)
+    role = models.CharField(
+        max_length=50,
+        choices=[
+            ('admin', 'Administrador'),
+            ('despachante_senior', 'Despachante Senior'),
+            ('operador', 'Operador'),
+            ('solo_lectura', 'Solo Lectura'),
+        ],
+        default='operador'
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    USERNAME_FIELD = 'email'
+    REQUIRED_FIELDS = ['username', 'first_name', 'last_name']
+
+    def __str__(self):
+        return f"{self.get_full_name()} ({self.email})"
+
+    @property
+    def full_name(self):
+        return f"{self.first_name} {self.last_name}".strip()
+
+
+=== BACKEND DJANGO - VIEWS ===
+
+
+### FILE: backend/apps/audit/views.py ###
+from rest_framework.viewsets import ModelViewSet
+from rest_framework.decorators import api_view
+from rest_framework.response import Response
+
+@api_view(['GET'])
+def health_check(request):
+    return Response({'status': 'ok', 'app': __name__.split('.')[-2]})
+
+
+### FILE: backend/apps/reports/views.py ###
+from rest_framework.viewsets import ModelViewSet
+from rest_framework.decorators import api_view
+from rest_framework.response import Response
+
+@api_view(['GET'])
+def health_check(request):
+    return Response({'status': 'ok', 'app': __name__.split('.')[-2]})
+
+
+### FILE: backend/apps/documents/views.py ###
+from rest_framework.viewsets import ModelViewSet
+from rest_framework.decorators import api_view
+from rest_framework.response import Response
+
+@api_view(['GET'])
+def health_check(request):
+    return Response({'status': 'ok', 'app': __name__.split('.')[-2]})
+
+
+### FILE: backend/apps/customs/views.py ###
+# apps/customs/views.py
+from rest_framework import viewsets, status
+from rest_framework.decorators import action
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+from django.db.models import Q, Count
+from .models import DespachoAduanero, DocumentoDespacho, LiquidacionAduanera
+from .serializers import (
+    DespachoAduaneroListSerializer,
+    DespachoAduaneroDetailSerializer,
+    DocumentoDespachoSerializer,
+    LiquidacionAduaneraSerializer,
+    DashboardStatsSerializer
+)
+
+class DespachoAduaneroViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet para gestionar despachos aduaneros
+    """
+    queryset = DespachoAduanero.objects.all()
+    permission_classes = [IsAuthenticated]
+    
+    def get_serializer_class(self):
+        """Usar diferentes serializers según la acción"""
+        if self.action == 'list':
+            return DespachoAduaneroListSerializer
+        return DespachoAduaneroDetailSerializer
+    
+    def get_queryset(self):
+        """Filtrar despachos por parámetros de consulta"""
+        queryset = DespachoAduanero.objects.select_related('cliente')
+        
+        # Filtros opcionales
+        estado = self.request.query_params.get('estado')
+        cliente_id = self.request.query_params.get('cliente')
+        
+        if estado:
+            queryset = queryset.filter(estado=estado)
+        if cliente_id:
+            queryset = queryset.filter(cliente_id=cliente_id)
+            
+        return queryset.order_by('-fecha_creacion')
+    
+    @action(detail=False, methods=['get'])
+    def dashboard_stats(self, request):
+        """
+        Endpoint para obtener estadísticas del dashboard
+        """
+        try:
+            # Contar despachos por estado
+            total = DespachoAduanero.objects.count()
+            pendientes = DespachoAduanero.objects.filter(
+                Q(estado='pendiente') | Q(estado='PENDIENTE')
+            ).count()
+            completados = DespachoAduanero.objects.filter(
+                Q(estado='completado') | Q(estado='COMPLETADO')
+            ).count()
+            en_proceso = DespachoAduanero.objects.filter(
+                Q(estado='en_proceso') | Q(estado='EN_PROCESO')
+            ).count()
+            
+            stats_data = {
+                'total_despachos': total,
+                'despachos_pendientes': pendientes,
+                'despachos_completados': completados,
+                'despachos_en_proceso': en_proceso
+            }
+            
+            serializer = DashboardStatsSerializer(stats_data)
+            return Response(serializer.data)
+            
+        except Exception as e:
+            return Response(
+                {'error': f'Error al obtener estadísticas: {str(e)}'}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+class DocumentoDespachoViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet para gestionar documentos de despacho
+    """
+    queryset = DocumentoDespacho.objects.all()
+    serializer_class = DocumentoDespachoSerializer
+    permission_classes = [IsAuthenticated]
+
+class LiquidacionAduaneraViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet para gestionar liquidaciones aduaneras
+    """
+    queryset = LiquidacionAduanera.objects.all()
+    serializer_class = LiquidacionAduaneraSerializer
+    permission_classes = [IsAuthenticated]
+
+
+### FILE: backend/apps/dashboard/views.py ###
+from rest_framework.viewsets import ModelViewSet
+from rest_framework.decorators import api_view
+from rest_framework.response import Response
+
+@api_view(['GET'])
+def health_check(request):
+    return Response({'status': 'ok', 'app': __name__.split('.')[-2]})
+
+
+### FILE: backend/apps/clients/views.py ###
+from rest_framework.viewsets import ModelViewSet
+from rest_framework.decorators import api_view
+from rest_framework.response import Response
+
+@api_view(['GET'])
+def health_check(request):
+    return Response({'status': 'ok', 'app': __name__.split('.')[-2]})
+
+
+### FILE: backend/apps/authentication/views.py ###
+from rest_framework import status
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import AllowAny
+from rest_framework.response import Response
+from rest_framework_simplejwt.tokens import RefreshToken
+from .serializers import LoginSerializer, UserSerializer
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def login_view(request):
+    serializer = LoginSerializer(data=request.data)
+    if serializer.is_valid():
+        user = serializer.validated_data['user']
+        refresh = RefreshToken.for_user(user)
+        
+        return Response({
+            'user': UserSerializer(user).data,
+            'tokens': {
+                'access': str(refresh.access_token),
+                'refresh': str(refresh),
+            }
+        })
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+@api_view(['GET'])
+def profile_view(request):
+    serializer = UserSerializer(request.user)
+    return Response(serializer.data)
+
+
+=== BACKEND DJANGO - SERIALIZERS ===
+
+
+### FILE: backend/apps/customs/serializers.py ###
+# apps/customs/serializers.py
+from rest_framework import serializers
+from .models import DespachoAduanero, DocumentoDespacho, LiquidacionAduanera
+from apps.clients.models import Cliente
+
+class ClienteSimpleSerializer(serializers.ModelSerializer):
+    """Serializer básico para Cliente"""
+    class Meta:
+        model = Cliente
+        fields = [
+            'id', 
+            'nit', 
+            'razon_social', 
+            'nombre_comercial', 
+            'email', 
+            'telefono',
+            'tipo_cliente',
+            'estado'
+        ]
+
+class DocumentoDespachoSerializer(serializers.ModelSerializer):
+    """Serializer para DocumentoDespacho"""
+    class Meta:
+        model = DocumentoDespacho
+        fields = [
+            'id',
+            'despacho',
+            'tipo_documento',
+            'numero_documento', 
+            'fecha_emision',
+            'archivo',
+            'observaciones',
+            'fecha_carga'
+        ]
+
+class LiquidacionAduaneraSerializer(serializers.ModelSerializer):
+    """Serializer para LiquidacionAduanera"""
+    class Meta:
+        model = LiquidacionAduanera
+        fields = [
+            'id',
+            'despacho',
+            'gravamen_aduanero',
+            'iva',
+            'ice', 
+            'iehd',
+            'total_tributos',
+            'pagado',
+            'fecha_pago',
+            'numero_comprobante_pago'
+        ]
+
+class DespachoAduaneroListSerializer(serializers.ModelSerializer):
+    """Serializer simplificado para listado de despachos"""
+    cliente_razon_social = serializers.CharField(source='cliente.razon_social', read_only=True)
+    cliente_nit = serializers.CharField(source='cliente.nit', read_only=True)
+    
+    class Meta:
+        model = DespachoAduanero
+        fields = [
+            'id', 
+            'numero_referencia',
+            'estado',
+            'fecha_creacion',
+            'cliente',
+            'cliente_razon_social',
+            'cliente_nit',
+            'tipo_declaracion',
+            'aduana_registro',
+            'valor_fob',
+            'canal_asignado'
+        ]
+
+class DespachoAduaneroDetailSerializer(serializers.ModelSerializer):
+    """Serializer detallado para un despacho específico"""
+    cliente = ClienteSimpleSerializer(read_only=True)
+    documentos = DocumentoDespachoSerializer(many=True, read_only=True, source='documentodespacho_set')
+    liquidacion = LiquidacionAduaneraSerializer(read_only=True, source='liquidacionaduanera')
+    
+    class Meta:
+        model = DespachoAduanero
+        fields = [
+            'id',
+            'numero_referencia',
+            'cliente',
+            'tipo_declaracion',
+            'descripcion_mercancia',
+            'partida_arancelaria',
+            'pais_origen',
+            'pais_procedencia', 
+            'cantidad',
+            'unidad_medida',
+            'peso_bruto',
+            'peso_neto',
+            'valor_fob',
+            'valor_cif',
+            'tipo_cambio',
+            'aduana_registro',
+            'numero_manifiesto',
+            'fecha_llegada',
+            'estado',
+            'numero_dim',
+            'canal_asignado',
+            'usuario_creacion',
+            'fecha_creacion',
+            'fecha_actualizacion',
+            'documentos',
+            'liquidacion'
+        ]
+
+class DashboardStatsSerializer(serializers.Serializer):
+    """Serializer para estadísticas del dashboard"""
+    total_despachos = serializers.IntegerField()
+    despachos_pendientes = serializers.IntegerField()
+    despachos_completados = serializers.IntegerField()
+    despachos_en_proceso = serializers.IntegerField()
+
+
+### FILE: backend/apps/authentication/serializers.py ###
+from rest_framework import serializers
+from django.contrib.auth import authenticate
+from .models import User
+
+class UserSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = ['id', 'username', 'email', 'first_name', 'last_name', 'role', 'company', 'is_active', 'created_at']
+        read_only_fields = ['id', 'created_at']
+
+class LoginSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+    password = serializers.CharField()
+
+    def validate(self, attrs):
+        email = attrs.get('email')
+        password = attrs.get('password')
+        
+        if email and password:
+            user = authenticate(username=email, password=password)
+            if not user:
+                raise serializers.ValidationError('Credenciales inválidas')
+            if not user.is_active:
+                raise serializers.ValidationError('Usuario inactivo')
+            attrs['user'] = user
+        else:
+            raise serializers.ValidationError('Email y contraseña requeridos')
+        return attrs
+
+
+=== BACKEND - URLS ===
+
+
+### FILE: backend/venv/lib/python3.13/site-packages/rest_framework/urls.py ###
+"""
+Login and logout views for the browsable API.
+
+Add these to your root URLconf if you're using the browsable API and
+your API requires authentication:
+
+    urlpatterns = [
+        ...
+        path('auth/', include('rest_framework.urls'))
+    ]
+
+You should make sure your authentication settings include `SessionAuthentication`.
+"""
+from django.contrib.auth import views
+from django.urls import path
+
+app_name = 'rest_framework'
+urlpatterns = [
+    path('login/', views.LoginView.as_view(template_name='rest_framework/login.html'), name='login'),
+    path('logout/', views.LogoutView.as_view(), name='logout'),
+]
+
+
+### FILE: backend/venv/lib/python3.13/site-packages/rest_framework/utils/urls.py ###
+from urllib import parse
+
+from django.utils.encoding import force_str
+
+
+def replace_query_param(url, key, val):
+    """
+    Given a URL and a key/val pair, set or replace an item in the query
+    parameters of the URL, and return the new URL.
+    """
+    (scheme, netloc, path, query, fragment) = parse.urlsplit(force_str(url))
+    query_dict = parse.parse_qs(query, keep_blank_values=True)
+    query_dict[force_str(key)] = [force_str(val)]
+    query = parse.urlencode(sorted(query_dict.items()), doseq=True)
+    return parse.urlunsplit((scheme, netloc, path, query, fragment))
+
+
+def remove_query_param(url, key):
+    """
+    Given a URL and a key/val pair, remove an item in the query
+    parameters of the URL, and return the new URL.
+    """
+    (scheme, netloc, path, query, fragment) = parse.urlsplit(force_str(url))
+    query_dict = parse.parse_qs(query, keep_blank_values=True)
+    query_dict.pop(key, None)
+    query = parse.urlencode(sorted(query_dict.items()), doseq=True)
+    return parse.urlunsplit((scheme, netloc, path, query, fragment))
+
+
+### FILE: backend/venv/lib/python3.13/site-packages/django/core/checks/urls.py ###
+from collections import Counter
+
+from django.conf import settings
+
+from . import Error, Tags, Warning, register
+
+
+@register(Tags.urls)
+def check_url_config(app_configs, **kwargs):
+    if getattr(settings, "ROOT_URLCONF", None):
+        from django.urls import get_resolver
+
+        resolver = get_resolver()
+        return check_resolver(resolver)
+    return []
+
+
+def check_resolver(resolver):
+    """
+    Recursively check the resolver.
+    """
+    check_method = getattr(resolver, "check", None)
+    if check_method is not None:
+        return check_method()
+    elif not hasattr(resolver, "resolve"):
+        return get_warning_for_invalid_pattern(resolver)
+    else:
+        return []
+
+
+@register(Tags.urls)
+def check_url_namespaces_unique(app_configs, **kwargs):
+    """
+    Warn if URL namespaces used in applications aren't unique.
+    """
+    if not getattr(settings, "ROOT_URLCONF", None):
+        return []
+
+    from django.urls import get_resolver
+
+    resolver = get_resolver()
+    all_namespaces = _load_all_namespaces(resolver)
+    counter = Counter(all_namespaces)
+    non_unique_namespaces = [n for n, count in counter.items() if count > 1]
+    errors = []
+    for namespace in non_unique_namespaces:
+        errors.append(
+            Warning(
+                "URL namespace '{}' isn't unique. You may not be able to reverse "
+                "all URLs in this namespace".format(namespace),
+                id="urls.W005",
+            )
+        )
+    return errors
+
+
+def _load_all_namespaces(resolver, parents=()):
+    """
+    Recursively load all namespaces from URL patterns.
+    """
+    url_patterns = getattr(resolver, "url_patterns", [])
+    namespaces = [
+        ":".join(parents + (url.namespace,))
+        for url in url_patterns
+        if getattr(url, "namespace", None) is not None
+    ]
+    for pattern in url_patterns:
+        namespace = getattr(pattern, "namespace", None)
+        current = parents
+        if namespace is not None:
+            current += (namespace,)
+        namespaces.extend(_load_all_namespaces(pattern, current))
+    return namespaces
+
+
+def get_warning_for_invalid_pattern(pattern):
+    """
+    Return a list containing a warning that the pattern is invalid.
+
+    describe_pattern() cannot be used here, because we cannot rely on the
+    urlpattern having regex or name attributes.
+    """
+    if isinstance(pattern, str):
+        hint = (
+            "Try removing the string '{}'. The list of urlpatterns should not "
+            "have a prefix string as the first element.".format(pattern)
+        )
+    elif isinstance(pattern, tuple):
+        hint = "Try using path() instead of a tuple."
+    else:
+        hint = None
+
+    return [
+        Error(
+            "Your URL pattern {!r} is invalid. Ensure that urlpatterns is a list "
+            "of path() and/or re_path() instances.".format(pattern),
+            hint=hint,
+            id="urls.E004",
+        )
+    ]
+
+
+@register(Tags.urls)
+def check_url_settings(app_configs, **kwargs):
+    errors = []
+    for name in ("STATIC_URL", "MEDIA_URL"):
+        value = getattr(settings, name)
+        if value and not value.endswith("/"):
+            errors.append(E006(name))
+    return errors
+
+
+def E006(name):
+    return Error(
+        "The {} setting must end with a slash.".format(name),
+        id="urls.E006",
+    )
+
+
+### FILE: backend/venv/lib/python3.13/site-packages/django/contrib/admindocs/urls.py ###
+from django.contrib.admindocs import views
+from django.urls import path, re_path
+
+urlpatterns = [
+    path(
+        "",
+        views.BaseAdminDocsView.as_view(template_name="admin_doc/index.html"),
+        name="django-admindocs-docroot",
+    ),
+    path(
+        "bookmarklets/",
+        views.BookmarkletsView.as_view(),
+        name="django-admindocs-bookmarklets",
+    ),
+    path(
+        "tags/",
+        views.TemplateTagIndexView.as_view(),
+        name="django-admindocs-tags",
+    ),
+    path(
+        "filters/",
+        views.TemplateFilterIndexView.as_view(),
+        name="django-admindocs-filters",
+    ),
+    path(
+        "views/",
+        views.ViewIndexView.as_view(),
+        name="django-admindocs-views-index",
+    ),
+    path(
+        "views/<view>/",
+        views.ViewDetailView.as_view(),
+        name="django-admindocs-views-detail",
+    ),
+    path(
+        "models/",
+        views.ModelIndexView.as_view(),
+        name="django-admindocs-models-index",
+    ),
+    re_path(
+        r"^models/(?P<app_label>[^\.]+)\.(?P<model_name>[^/]+)/$",
+        views.ModelDetailView.as_view(),
+        name="django-admindocs-models-detail",
+    ),
+    path(
+        "templates/<path:template>/",
+        views.TemplateDetailView.as_view(),
+        name="django-admindocs-templates",
+    ),
+]
+
+
+### FILE: backend/venv/lib/python3.13/site-packages/django/contrib/auth/urls.py ###
+# The views used below are normally mapped in the AdminSite instance.
+# This URLs file is used to provide a reliable view deployment for test purposes.
+# It is also provided as a convenience to those who want to deploy these URLs
+# elsewhere.
+
+from django.contrib.auth import views
+from django.urls import path
+
+urlpatterns = [
+    path("login/", views.LoginView.as_view(), name="login"),
+    path("logout/", views.LogoutView.as_view(), name="logout"),
+    path(
+        "password_change/", views.PasswordChangeView.as_view(), name="password_change"
+    ),
+    path(
+        "password_change/done/",
+        views.PasswordChangeDoneView.as_view(),
+        name="password_change_done",
+    ),
+    path("password_reset/", views.PasswordResetView.as_view(), name="password_reset"),
+    path(
+        "password_reset/done/",
+        views.PasswordResetDoneView.as_view(),
+        name="password_reset_done",
+    ),
+    path(
+        "reset/<uidb64>/<token>/",
+        views.PasswordResetConfirmView.as_view(),
+        name="password_reset_confirm",
+    ),
+    path(
+        "reset/done/",
+        views.PasswordResetCompleteView.as_view(),
+        name="password_reset_complete",
+    ),
+]
+
+
+### FILE: backend/venv/lib/python3.13/site-packages/django/contrib/flatpages/urls.py ###
+from django.contrib.flatpages import views
+from django.urls import path
+
+urlpatterns = [
+    path("<path:url>", views.flatpage, name="django.contrib.flatpages.views.flatpage"),
+]
+
+
+### FILE: backend/venv/lib/python3.13/site-packages/django/contrib/staticfiles/urls.py ###
+from django.conf import settings
+from django.conf.urls.static import static
+from django.contrib.staticfiles.views import serve
+
+urlpatterns = []
+
+
+def staticfiles_urlpatterns(prefix=None):
+    """
+    Helper function to return a URL pattern for serving static files.
+    """
+    if prefix is None:
+        prefix = settings.STATIC_URL
+    return static(prefix, view=serve)
+
+
+# Only append if urlpatterns are empty
+if settings.DEBUG and not urlpatterns:
+    urlpatterns += staticfiles_urlpatterns()
+
+
+### FILE: backend/venv/lib/python3.13/site-packages/pip/_internal/utils/urls.py ###
+import os
+import string
+import urllib.parse
+import urllib.request
+
+from .compat import WINDOWS
+
+
+def path_to_url(path: str) -> str:
+    """
+    Convert a path to a file: URL.  The path will be made absolute and have
+    quoted path parts.
+    """
+    path = os.path.normpath(os.path.abspath(path))
+    url = urllib.parse.urljoin("file:", urllib.request.pathname2url(path))
+    return url
+
+
+def url_to_path(url: str) -> str:
+    """
+    Convert a file: URL to a path.
+    """
+    assert url.startswith(
+        "file:"
+    ), f"You can only turn file: urls into filenames (not {url!r})"
+
+    _, netloc, path, _, _ = urllib.parse.urlsplit(url)
+
+    if not netloc or netloc == "localhost":
+        # According to RFC 8089, same as empty authority.
+        netloc = ""
+    elif WINDOWS:
+        # If we have a UNC path, prepend UNC share notation.
+        netloc = "\\\\" + netloc
+    else:
+        raise ValueError(
+            f"non-local file URIs are not supported on this platform: {url!r}"
+        )
+
+    path = urllib.request.url2pathname(netloc + path)
+
+    # On Windows, urlsplit parses the path as something like "/C:/Users/foo".
+    # This creates issues for path-related functions like io.open(), so we try
+    # to detect and strip the leading slash.
+    if (
+        WINDOWS
+        and not netloc  # Not UNC.
+        and len(path) >= 3
+        and path[0] == "/"  # Leading slash to strip.
+        and path[1] in string.ascii_letters  # Drive letter.
+        and path[2:4] in (":", ":/")  # Colon + end of string, or colon + absolute path.
+    ):
+        path = path[1:]
+
+    return path
+
+
+### FILE: backend/venv/lib/python3.13/site-packages/debug_toolbar/urls.py ###
+from debug_toolbar import APP_NAME
+from debug_toolbar.toolbar import DebugToolbar
+
+app_name = APP_NAME
+urlpatterns = DebugToolbar.get_urls()
+
+
+### FILE: backend/bridge_core/urls.py ###
+from django.contrib import admin
+from django.urls import path, include
+from drf_spectacular.views import SpectacularAPIView, SpectacularRedocView, SpectacularSwaggerView
+
+urlpatterns = [
+    path('admin/', admin.site.urls),
+    # API URLs
+    path('api/', include([
+        path('auth/', include('apps.authentication.urls')),
+        path('clients/', include('apps.clients.urls')),
+        path('customs/', include('apps.customs.urls')),  # ← ESTA LÍNEA ES IMPORTANTE
+        path('documents/', include('apps.documents.urls')),
+        path('dashboard/', include('apps.dashboard.urls')),
+        path('reports/', include('apps.reports.urls')),
+        path('audit/', include('apps.audit.urls')),
+    ])),
+    # API Documentation
+    path('api/schema/', SpectacularAPIView.as_view(), name='schema'),
+    path('api/schema/swagger-ui/', SpectacularSwaggerView.as_view(url_name='schema'), name='swagger-ui'),
+    path('api/schema/redoc/', SpectacularRedocView.as_view(url_name='schema'), name='redoc'),
+]
+
+
+### FILE: backend/apps/audit/urls.py ###
+from django.urls import path
+from . import views
+
+urlpatterns = [
+    path('health/', views.health_check, name='health'),
+]
+
+
+### FILE: backend/apps/reports/urls.py ###
+from django.urls import path
+from . import views
+
+urlpatterns = [
+    path('health/', views.health_check, name='health'),
+]
+
+
+### FILE: backend/apps/documents/urls.py ###
+from django.urls import path
+from . import views
+
+urlpatterns = [
+    path('health/', views.health_check, name='health'),
+]
+
+
+### FILE: backend/apps/customs/urls.py ###
+from django.urls import path, include
+from rest_framework.routers import DefaultRouter
+from .views import (
+    DespachoAduaneroViewSet, 
+    DocumentoDespachoViewSet, 
+    LiquidacionAduaneraViewSet
+)
+
+router = DefaultRouter()
+router.register(r'despachos', DespachoAduaneroViewSet)
+router.register(r'documentos-despacho', DocumentoDespachoViewSet)
+router.register(r'liquidaciones', LiquidacionAduaneraViewSet)
+
+urlpatterns = [
+    path('', include(router.urls)),
+]
+
+
+### FILE: backend/apps/dashboard/urls.py ###
+from django.urls import path
+from . import views
+
+urlpatterns = [
+    path('health/', views.health_check, name='health'),
+]
+
+
+### FILE: backend/apps/clients/urls.py ###
+from django.urls import path
+from . import views
+
+urlpatterns = [
+    path('health/', views.health_check, name='health'),
+]
+
+
+### FILE: backend/apps/authentication/urls.py ###
+from django.urls import path
+from rest_framework_simplejwt.views import TokenRefreshView
+from . import views
+
+urlpatterns = [
+    path('login/', views.login_view, name='login'),
+    path('profile/', views.profile_view, name='profile'),
+    path('refresh/', TokenRefreshView.as_view(), name='token_refresh'),
+]
+
+
+=== FRONTEND - COMPONENTES ===
+
+
+### FILE: frontend/src/components/Dashboard.tsx ###
+import React from 'react';
+import { 
+  Users, 
+  FileText, 
+  TrendingUp, 
+  Clock, 
+  AlertCircle, 
+  CheckCircle,
+  BarChart3,
+  DollarSign,
+  Package,
+  Calendar,
+  Bell,
+  Search,
+  Menu,
+  Settings,
+  LogOut
+} from 'lucide-react';
+
+const Dashboard = () => {
+  // Datos simulados para el dashboard
+  const stats = [
+    {
+      title: "Despachos Activos",
+      value: "24",
+      change: "+12%",
+      trend: "up",
+      icon: Package,
+      color: "text-blue-600"
+    },
+    {
+      title: "Clientes Activos", 
+      value: "156",
+      change: "+8%",
+      trend: "up",
+      icon: Users,
+      color: "text-green-600"
+    },
+    {
+      title: "Ingresos Mensuales",
+      value: "$45,200",
+      change: "+15%", 
+      trend: "up",
+      icon: DollarSign,
+      color: "text-purple-600"
+    },
+    {
+      title: "Eficiencia",
+      value: "94%",
+      change: "+3%",
+      trend: "up", 
+      icon: TrendingUp,
+      color: "text-orange-600"
+    }
+  ];
+
+  const recentActivities = [
+    {
+      id: 1,
+      type: "despacho",
+      title: "DIM-2025-001 completado",
+      time: "Hace 15 min",
+      status: "completed"
+    },
+    {
+      id: 2,
+      type: "cliente",
+      title: "Nuevo cliente registrado",
+      time: "Hace 1 hora",
+      status: "new"
+    },
+    {
+      id: 3,
+      type: "alerta",
+      title: "Vencimiento de documento",
+      time: "Hace 2 horas",
+      status: "warning"
+    },
+    {
+      id: 4,
+      type: "despacho",
+      title: "Inspección pendiente",
+      time: "Hace 3 horas",
+      status: "pending"
+    }
+  ];
+
+  const quickActions = [
+    { name: "Nuevo Despacho", icon: Package, color: "bg-blue-500" },
+    { name: "Agregar Cliente", icon: Users, color: "bg-green-500" },
+    { name: "Generar Reporte", icon: FileText, color: "bg-purple-500" },
+    { name: "Ver Calendario", icon: Calendar, color: "bg-orange-500" }
+  ];
+
+  return (
+    <div className="min-h-screen bg-gray-50">
+      {/* Header */}
+      <header className="bg-white shadow-sm border-b border-gray-200">
+        <div className="flex items-center justify-between px-6 py-4">
+          <div className="flex items-center space-x-4">
+            <Menu className="h-6 w-6 text-gray-600 cursor-pointer" />
+            <div className="flex items-center space-x-2">
+              <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
+                <span className="text-white font-bold text-sm">B</span>
+              </div>
+              <span className="text-xl font-bold text-gray-900">BRIDGE</span>
+            </div>
+          </div>
+          
+          <div className="flex items-center space-x-4">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+              <input
+                type="text"
+                placeholder="Buscar..."
+                className="pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              />
+            </div>
+            <Bell className="h-6 w-6 text-gray-600 cursor-pointer" />
+            <Settings className="h-6 w-6 text-gray-600 cursor-pointer" />
+            <LogOut className="h-6 w-6 text-gray-600 cursor-pointer" />
+          </div>
+        </div>
+      </header>
+
+      {/* Main Content */}
+      <div className="flex">
+        {/* Sidebar */}
+        <aside className="w-64 bg-white shadow-sm min-h-screen">
+          <nav className="mt-8">
+            <div className="px-4 space-y-2">
+              <a href="#" className="flex items-center space-x-3 text-gray-700 p-2 rounded-lg bg-blue-50 text-blue-700">
+                <BarChart3 className="h-5 w-5" />
+                <span className="font-medium">Dashboard</span>
+              </a>
+              <a href="#" className="flex items-center space-x-3 text-gray-700 p-2 rounded-lg hover:bg-gray-50">
+                <Package className="h-5 w-5" />
+                <span>Despachos</span>
+              </a>
+              <a href="#" className="flex items-center space-x-3 text-gray-700 p-2 rounded-lg hover:bg-gray-50">
+                <Users className="h-5 w-5" />
+                <span>Clientes</span>
+              </a>
+              <a href="#" className="flex items-center space-x-3 text-gray-700 p-2 rounded-lg hover:bg-gray-50">
+                <FileText className="h-5 w-5" />
+                <span>Documentos</span>
+              </a>
+              <a href="#" className="flex items-center space-x-3 text-gray-700 p-2 rounded-lg hover:bg-gray-50">
+                <TrendingUp className="h-5 w-5" />
+                <span>Reportes</span>
+              </a>
+            </div>
+          </nav>
+        </aside>
+
+        {/* Main Dashboard */}
+        <main className="flex-1 p-6">
+          {/* Welcome Section */}
+          <div className="mb-8">
+            <h1 className="text-2xl font-bold text-gray-900">¡Bienvenido al Dashboard BRIDGE!</h1>
+            <p className="text-gray-600 mt-1">Gestión integral de operaciones aduaneras para Bolivia</p>
+          </div>
+
+          {/* Stats Grid */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+            {stats.map((stat, index) => (
+              <div key={index} className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-gray-600">{stat.title}</p>
+                    <p className="text-2xl font-bold text-gray-900 mt-1">{stat.value}</p>
+                    <p className={`text-sm mt-1 ${stat.trend === 'up' ? 'text-green-600' : 'text-red-600'}`}>
+                      {stat.change}
+                    </p>
+                  </div>
+                  <div className={`p-3 rounded-lg ${stat.color} bg-opacity-10`}>
+                    <stat.icon className={`h-6 w-6 ${stat.color}`} />
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Quick Actions */}
+          <div className="mb-8">
+            <h2 className="text-lg font-semibold text-gray-900 mb-4">Acciones Rápidas</h2>
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+              {quickActions.map((action, index) => (
+                <button
+                  key={index}
+                  className="p-4 bg-white rounded-xl shadow-sm border border-gray-200 hover:shadow-md transition-shadow"
+                >
+                  <div className={`w-12 h-12 ${action.color} rounded-lg flex items-center justify-center mb-3 mx-auto`}>
+                    <action.icon className="h-6 w-6 text-white" />
+                  </div>
+                  <p className="text-sm font-medium text-gray-900">{action.name}</p>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Recent Activity & Chart */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Recent Activity */}
+            <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
+              <h3 className="text-lg font-semibold text-gray-900 mb-4">Actividad Reciente</h3>
+              <div className="space-y-4">
+                {recentActivities.map((activity) => (
+                  <div key={activity.id} className="flex items-center space-x-3">
+                    <div className={`w-2 h-2 rounded-full ${
+                      activity.status === 'completed' ? 'bg-green-500' :
+                      activity.status === 'warning' ? 'bg-yellow-500' :
+                      activity.status === 'new' ? 'bg-blue-500' : 'bg-gray-500'
+                    }`}></div>
+                    <div className="flex-1">
+                      <p className="text-sm font-medium text-gray-900">{activity.title}</p>
+                      <p className="text-xs text-gray-500">{activity.time}</p>
+                    </div>
+                    {activity.status === 'completed' && <CheckCircle className="h-4 w-4 text-green-500" />}
+                    {activity.status === 'warning' && <AlertCircle className="h-4 w-4 text-yellow-500" />}
+                    {activity.status === 'pending' && <Clock className="h-4 w-4 text-gray-500" />}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Chart Placeholder */}
+            <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
+              <h3 className="text-lg font-semibold text-gray-900 mb-4">Despachos por Mes</h3>
+              <div className="h-64 bg-gradient-to-r from-blue-50 to-purple-50 rounded-lg flex items-center justify-center">
+                <div className="text-center">
+                  <BarChart3 className="h-16 w-16 text-blue-500 mx-auto mb-4" />
+                  <p className="text-gray-600">Gráfico de despachos</p>
+                  <p className="text-sm text-gray-500">Datos en tiempo real</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Status Banner */}
+          <div className="mt-8 bg-gradient-to-r from-blue-600 to-purple-600 text-white p-6 rounded-xl">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-lg font-semibold">Sistema BRIDGE Operativo</h3>
+                <p className="text-blue-100">Todas las integraciones funcionando correctamente</p>
+              </div>
+              <div className="flex items-center space-x-2">
+                <div className="w-3 h-3 bg-green-400 rounded-full animate-pulse"></div>
+                <span className="text-sm">En línea</span>
+              </div>
+            </div>
+          </div>
+        </main>
+      </div>
+    </div>
+  );
+};
+
+export default Dashboard;
+
+
+### FILE: frontend/src/pages/index.tsx ###
+import Dashboard from '../components/Dashboard';
+
+export default function Home() {
+  return <Dashboard />;
+}
+
+
+### FILE: frontend/src/pages/_app.tsx ###
+import type { AppProps } from 'next/app'
+import Head from 'next/head'
+
+export default function App({ Component, pageProps }: AppProps) {
+  return (
+    <>
+      <Head>
+        <script src="https://cdn.tailwindcss.com"></script>
+        <script dangerouslySetInnerHTML={{
+          __html: `
+            tailwind.config = {
+              theme: {
+                extend: {
+                  colors: {
+                    'bridge-blue': '#2B3A67',
+                    'bridge-blue-light': '#2F5EAB',
+                    'bridge-gray': '#2C2F3A',
+                  }
+                }
+              }
+            }
+          `
+        }} />
+      </Head>
+      <Component {...pageProps} />
+    </>
+  )
+}
+
+
+=== CONFIGURACIÓN ===
+### backend/requirements.txt ###
+# Django Core
+Django==4.2.7
+djangorestframework==3.14.0
+django-cors-headers==4.3.1
+
+# Database & Cache
+psycopg2-binary==2.9.7
+redis==4.6.0
+django-redis==5.4.0
+
+# Authentication
+djangorestframework-simplejwt==5.3.0
+cryptography==41.0.7
+
+# API Documentation
+drf-spectacular==0.26.5
+
+# Environment
+python-decouple==3.8
+
+# Utils
+requests==2.31.0
+python-dateutil==2.8.2
+
+# Production
+gunicorn==21.2.0
+whitenoise==6.6.0
+
+# Development
+django-debug-toolbar==4.2.0
+django-extensions==3.2.3
+
+### frontend/package.json ###
+{
+  "name": "frontend",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "@hookform/resolvers": "^5.2.0",
+    "@tailwindcss/postcss": "^4.1.11",
+    "@types/node": "^24.1.0",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "lucide-react": "^0.525.0",
+    "next": "^15.0.0",
+    "react": "^18.0.0",
+    "react-dom": "^18.0.0",
+    "react-hook-form": "^7.61.1",
+    "recharts": "^3.1.0",
+    "tailwind-merge": "^3.3.1",
+    "zod": "^4.0.10"
+  },
+  "devDependencies": {
+    "@types/react": "^18.0.0",
+    "@types/react-dom": "^18.0.0",
+    "autoprefixer": "^10.4.21",
+    "postcss": "^8.5.6",
+    "tailwindcss": "^4.1.11",
+    "typescript": "^5.0.0"
+  }
+}
