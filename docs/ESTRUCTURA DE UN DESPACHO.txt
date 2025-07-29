@@ -1,0 +1,197 @@
+📋 ESTRUCTURA DE UN DESPACHO ADUANERO BOLIVIANO
+CAMPOS OBLIGATORIOS SEGÚN NORMATIVA:
+
+Datos del Importador/Exportador:
+
+NIT (obligatorio)
+Razón Social
+Dirección legal
+Representante legal
+
+
+Datos de la Mercancía:
+
+Descripción comercial
+Partida arancelaria (8 dígitos mínimo)
+País de origen
+País de procedencia
+Cantidad y unidad de medida
+Peso bruto y neto
+Valor FOB
+Valor CIF (para importaciones)
+
+
+Datos del Despacho:
+
+Aduana de ingreso/salida
+Modalidad de despacho
+Régimen aduanero
+Tipo de cambio del día
+Número de manifiesto
+Fecha de llegada
+
+
+
+TIPOS DE DECLARACIÓN MÁS COMUNES:
+
+Importación para el Consumo (IM4) - 70% de los casos
+Exportación Definitiva (EX1) - 20% de los casos
+Admisión Temporal (IM5) - 5% de los casos
+Reexportación (EX3) - 3% de los casos
+Otros regímenes - 2% de los casos
+
+DOCUMENTOS SIEMPRE REQUERIDOS:
+Para Importación:
+
+Factura Comercial (original)
+Documento de Transporte (BL, Guía Aérea, CRT)
+Packing List (lista de empaque)
+Declaración Andina de Valor (DAV)
+Póliza de Seguro (si aplica)
+Certificado de Origen (para preferencias arancelarias)
+
+Para Exportación:
+
+Factura Comercial de Exportación
+Packing List
+Certificado de Origen (si lo requiere el importador)
+Autorizaciones previas (según el producto)
+
+🔄 FLUJO DE TRABAJO TÍPICO
+PROCESO PASO A PASO:
+
+RECEPCIÓN DEL CLIENTE
+
+Cliente entrega documentos
+Verificación inicial de documentación
+Apertura de carpeta/expediente
+Asignación de número interno
+
+
+REVISIÓN DOCUMENTAL
+
+Validación de factura comercial
+Verificación de documento de transporte
+Revisión de permisos previos (si aplica)
+Cálculo de liquidación preliminar
+
+
+CLASIFICACIÓN ARANCELARIA
+
+Determinar partida arancelaria correcta
+Verificar restricciones y prohibiciones
+Identificar certificaciones requeridas
+
+
+ELABORACIÓN DE DECLARACIÓN
+
+Digitación en SIDUNEA++
+Cálculo de tributos
+Generación de liquidación
+
+
+PAGO Y VALIDACIÓN
+
+Cliente realiza pago en banco
+Validación del pago en sistema
+Numeración de la declaración
+
+
+DESPACHO FÍSICO
+
+Asignación de canal (verde, amarillo, rojo)
+Aforo (si corresponde)
+Levante autorizado
+
+
+ENTREGA Y ARCHIVO
+
+Entrega de documentos al cliente
+Archivo de respaldos
+Registro en sistema interno
+
+
+
+VALIDACIONES CRÍTICAS:
+
+NIT activo y habilitado en Impuestos Nacionales
+Coherencia entre factura y documento de transporte
+Valor declarado vs. precios referenciales
+Partida arancelaria correcta
+Autorizaciones previas (SENASAG, IBMETRO, etc.)
+Vigencia de poderes del despachante
+
+ESTADOS DEL DESPACHO:
+
+BORRADOR - En preparación
+ELABORADO - Listo para enviar
+ENVIADO - Transmitido a SIDUNEA
+OBSERVADO - Con observaciones de aduana
+PAGADO - Tributos cancelados
+NUMERADO - DIM/DUI asignado
+EN AFORO - Revisión física/documental
+LEVANTE - Autorizado para retiro
+CONCLUIDO - Mercancía retirada
+ARCHIVADO - Proceso finalizado
+
+🔌 INTEGRACIONES PRIORITARIAS
+PRIORIDAD #1: SIDUNEA++ World
+Sí, es la integración más crítica porque es el sistema oficial de la Aduana Nacional de Bolivia.
+DATOS A INTERCAMBIAR CON SIDUNEA:
+Enviar:
+
+Datos del importador/exportador
+Detalle de mercancías
+Documentos digitalizados
+Información de transporte
+Liquidación de tributos
+
+Recibir:
+
+Número de DIM/DUI
+Estado de la declaración
+Observaciones
+Canal asignado
+Autorización de levante
+
+OTRAS INTEGRACIONES IMPORTANTES:
+
+BANCO CENTRAL DE BOLIVIA
+
+Tipos de cambio oficiales
+API REST disponible públicamente
+
+
+SENASAG
+
+Permisos fitosanitarios
+Sistema SISCONT
+
+
+IMPUESTOS NACIONALES
+
+Validación de NIT
+Sistema GAUSS
+
+
+FUNDEMPRESA
+
+Verificación de empresas
+Poderes de representación
+
+
+
+ACCESO A DOCUMENTACIÓN:
+La documentación de SIDUNEA++ no es pública, pero trabajamos con:
+
+Manual de Usuario SIDUNEA++ (proporcionado en capacitaciones)
+Esquemas XML para intercambio de datos
+Ambiente de pruebas (cuando se solicita formalmente)
+
+🎯 RECOMENDACIÓN PARA EL PROYECTO BRIDGE:
+
+Comenzar con flujo de importación definitiva (IM4) - es el más común
+Simular la integración SIDUNEA inicialmente con datos de prueba
+Implementar validaciones críticas desde el inicio
+Preparar estructura para manejar todos los estados
+Diseñar el sistema para ser flexible ante cambios normativos

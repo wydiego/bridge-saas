@@ -142,6 +142,7 @@ SPECTACULAR_SETTINGS = {
     'TITLE': 'BRIDGE SaaS API - Lewis',
     'DESCRIPTION': 'Sistema para Despachantes de Aduana',
     'VERSION': '1.0.0',
+    'SERVE_INCLUDE_SCHEMA': False, 
 }
 
 # Lewis Configuration
